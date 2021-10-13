@@ -1,6 +1,5 @@
 using Viznet
-using Viznet: inner_most_containers, put_edge!, put_node!, empty_cache!, nedge, nnode,
-    EDGE_CACHE, NODE_CACHE
+using Viznet: inner_most_containers, put_edge!, put_node!, empty_cache!, nedge, nnode, ncanvas, CACHE
 using Test
 using Compose
 
@@ -31,7 +30,7 @@ end
     c >> ((0.3, 0.8), (2.3, 1.9))
     c0 = bondstyle(:default)
     c0 >> ((0.3, 0.8), (2.3, 2.9))
-    lst = flush!(EDGE_CACHE)
+    lst = flush!(CACHE.edge)
     @test length(lst) == 2
 end
 
@@ -42,7 +41,7 @@ end
     c >> (0.3, 0.8)
     c0 = nodestyle(:default)
     c0 >> (0.3, 0.8)
-    lst = flush!(NODE_CACHE)
+    lst = flush!(CACHE.node)
     @test length(lst) == 2
 end
 
@@ -76,5 +75,30 @@ end
         ]
         lines = Viznet.similar(l2, [((0.1,0.1), (0.2,0.2)), ((0.3,0.3), (0.4, 0.4))])
         @test lines.primitives |> length == 2
+    end
+end
+
+@testset "inner canvas" begin
+    c = compose(context(), compose(context(), line()))
+    n = compose(context(), compose(context(), circle()))
+    canvas() do 
+        c >> ((0, 1), (2, 3))
+        n >> (0, 1)
+        inner = canvas() do
+            c >> ((2, 3), (4, 5))
+            c >> ((2, 3), (4, 5))
+            @test nnode() == 0
+            @test nedge() == 2
+        end
+
+        @test nnode() == 1
+        @test nedge() == 1
+        @test ncanvas() == 0
+
+        inner >> (0, 1, 2, 3)
+
+        @test nnode() == 1
+        @test nedge() == 1
+        @test ncanvas() == 1
     end
 end

@@ -1,16 +1,40 @@
 using Compose: LinePrimitive, CirclePrimitive, Form, SimplePolygonPrimitive,
     RectanglePrimitive, TextPrimitive, ArcPrimitive, CurvePrimitive
+using Measures: Length, BoundingBox
 const PointT = Tuple{Float64,Float64}
 const TextT = Tuple{Float64,Float64,String}
 const EdgeT = Tuple{PointT, PointT}
-const NODE_CACHE = MyOrderedDict{Context, Vector{PointT}}()
-const EDGE_CACHE = MyOrderedDict{Context, Vector{EdgeT}}()
-const TEXT_CACHE = MyOrderedDict{Context, Vector{TextT}}()
+const CanvasT = NTuple{4, Float64}
 const TextBrush = Pair{Context,String}
+
+struct Cache
+    node :: MyOrderedDict{Context, Vector{PointT}}
+    edge :: MyOrderedDict{Context, Vector{EdgeT}}
+    text :: MyOrderedDict{Context, Vector{TextT}}
+    canvas :: MyOrderedDict{Context, Vector{CanvasT}} # subcanvases
+end
+
+function Cache()
+    Cache(
+        MyOrderedDict{Context, Vector{PointT}}(),
+        MyOrderedDict{Context, Vector{EdgeT}}(),
+        MyOrderedDict{Context, Vector{TextT}}(),
+        MyOrderedDict{Context, Vector{CanvasT}}()
+    )
+end
+
+function Base.empty!(c::Cache)
+    for field in fieldnames(Cache)
+        empty!(getfield(c, field))
+    end
+end
+
+const CACHE = Cache()
 
 export flush!, canvas
 
 function put_node!(brush::Context, x::PointT)
+    NODE_CACHE = CACHE.node
     if haskey(NODE_CACHE, brush)
         push!(NODE_CACHE[brush], x)
     else
@@ -20,6 +44,7 @@ function put_node!(brush::Context, x::PointT)
 end
 
 function put_edge!(brush::Context, x::PointT, y::PointT)
+    EDGE_CACHE = CACHE.edge
     if haskey(EDGE_CACHE, brush)
         push!(EDGE_CACHE[brush], (x, y))
     else
@@ -29,6 +54,7 @@ function put_edge!(brush::Context, x::PointT, y::PointT)
 end
 
 function put_text!(brush::Context, x::PointT, y::String)
+    TEXT_CACHE = CACHE.text
     if haskey(TEXT_CACHE, brush)
         push!(TEXT_CACHE[brush], (x..., y))
     else
@@ -37,15 +63,33 @@ function put_text!(brush::Context, x::PointT, y::String)
     return (x..., y)
 end
 
-function empty_cache!()
-    empty!(NODE_CACHE)
-    empty!(EDGE_CACHE)
-    empty!(TEXT_CACHE)
+function put_canvas!(brush::Context, x0 = 0.0, y0 = 0.0, width = 1.0, height = 1.0)
+    CANVAS_CACHE = CACHE.canvas
+    val = (x0, y0, width, height)
+    if haskey(CANVAS_CACHE, brush)
+        push!(CANVAS_CACHE[brush], val)
+    else
+        CANVAS_CACHE[brush] = [val]
+    end
+    return val
 end
 
-nnode() = isempty(NODE_CACHE) ? 0 : sum(length, values(NODE_CACHE))
-nedge() = isempty(EDGE_CACHE) ? 0 : sum(length, values(EDGE_CACHE))
-ntext() = isempty(TEXT_CACHE) ? 0 : sum(length, values(TEXT_CACHE))
+empty_cache!() = empty!(CACHE)
+backup_cache() = deepcopy(CACHE)
+
+function restore_cache!(backup::Cache)
+    empty_cache!()
+    for field in fieldnames(Cache)
+        for (k, v) in getfield(backup, field)
+            getfield(CACHE, field)[k] = v
+        end
+    end
+end
+
+nnode() = isempty(CACHE.node) ? 0 : sum(length, values(CACHE.node))
+nedge() = isempty(CACHE.edge) ? 0 : sum(length, values(CACHE.edge))
+ntext() = isempty(CACHE.text) ? 0 : sum(length, values(CACHE.text))
+ncanvas() = isempty(CACHE.canvas) ? 0 : sum(length, values(CACHE.canvas))
 
 function inner_most_containers(f, c::Context)
     f(c)
@@ -66,6 +110,11 @@ function Base.:>>(brush::Context, position::NTuple{2,Real})
     put_node!(brush, Float64.(position))
 end
 
+function Base.:>>(brush::Context, position::NTuple{4,Real})
+    x0, y0, width, height = Float64.(position)
+    put_canvas!(brush, x0, y0, width, height)
+end
+
 function update_locs!(c, locs)
     isempty(c) && return
     c.head = similar(c.head, locs)
@@ -78,7 +127,15 @@ function flush!(d::MyOrderedDict)
     for (brush, lines) in d
         b = deepcopy(brush)
         inner_most_containers(b) do c
-            update_locs!(c.form_children, lines)
+            if length(lines) > 0 && length(first(lines)) == 4
+                length(lines) == 1 || error("we currently only support one subcanvas")
+                x0, y0, width, height = first(lines)
+                c.box = BoundingBox(
+                    Length(:w, x0), Length(:h, y0), Length(:w, width), Length(:h, height)
+                )
+            else
+                update_locs!(c.form_children, lines)
+            end
         end
         push!(lst, b)
     end
@@ -87,11 +144,8 @@ function flush!(d::MyOrderedDict)
 end
 
 function flush!()
-    compose(context(),
-        flush!(TEXT_CACHE)...,
-        flush!(NODE_CACHE)...,
-        flush!(EDGE_CACHE)...,
-        )
+    cxts = [flush!(getfield(CACHE, field)) for field in fieldnames(Cache)]
+    compose(context(), Iterators.flatten(cxts)...)
 end
 
 """
@@ -100,9 +154,12 @@ end
 paint on global canvas.
 """
 function canvas(f)
+    backup = backup_cache()
     empty_cache!()
     f()
-    flush!()
+    c = flush!()
+    restore_cache!(backup)
+    return c
 end
 
 similar(e::Form{<:LinePrimitive}, point_arrays) = line(point_arrays)

@@ -6,6 +6,7 @@ version = "0.3.3"
 [deps]
 Compose = "a81c6b42-2e10-5240-aca2-a61377ecd94b"
 Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
+Measures = "442fdcdd-2543-5da2-b0f3-8c86c306513e"
 
 [compat]
 Compose = "0.8, 0.9"
