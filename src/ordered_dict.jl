@@ -59,3 +59,5 @@ end
 function Base.iterate(d::MyOrderedDict, state=1)
     state > length(d) ? nothing : ((d.keys[state], d.vals[state]), state+1)
 end
+
+Base.values(d::MyOrderedDict) = d.vals
